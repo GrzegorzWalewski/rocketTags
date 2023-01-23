@@ -369,7 +369,7 @@
                 for (var addedNode of mutation.addedNodes) {
                     var messageNode = $(addedNode).find('[data-qa-type="message-body"]').get(0);
                     var rawMessage = $(messageNode).html();
-                    $(messageNode).find('a').each(function (index) {
+                    $(messageNode).find('.mention-link').each(function (index) {
                         if (inRoomTags[$(this).text()] === undefined) {
                             rawMessage = rawMessage.replace(this.outerHTML, '@' + $(this).prop('title'));
                         }
@@ -408,13 +408,19 @@
         });
 
 
-        $('ul li .body').each(function () {
+        $('[data-qa-type="message-body"]').each(function () {
             var rawMessage = $(this).html();
-            $(this).find('a').each(function (index) {
-                rawMessage = rawMessage.replace(this.outerHTML, '@' + $(this).prop('title'));
+            console.log(rawMessage);
+            $(this).find('.mention-link').each(function (index) {
+                if (inRoomTags[$(this).text()] === undefined) {
+                    rawMessage = rawMessage.replace(this.outerHTML, '@' + $(this).prop('title'));
+                }
             })
             rawMessage = reverseReplaceTags(inRoomTags, rawMessage);
-            $(this).html(rawMessage);
+
+            if ($(this).html() !== rawMessage) {
+                $(this).html(rawMessage);
+            }
         });
 
         input.onkeydown = function (e) {
