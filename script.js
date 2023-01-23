@@ -363,26 +363,22 @@
         channelMembers = await loadChannelMembers(channelMembers);
         var inRoomTags = generateInRoomTags(channelMembers);
         MutationObserver = window.MutationObserver || window.WebKitMutationObserver;
-        var lsObserver = new MutationObserver(function (mutations, observer) {
-            var rawMessage = $(mutations[0].target).html();
-            $(mutations[0].target).find('a').each(function (index) {
-                if (inRoomTags[$(this).text()] == undefined) {
-                    rawMessage = rawMessage.replace(this.outerHTML, '@' + $(this).prop('title'));
-                }
-            })
-            rawMessage = reverseReplaceTags(inRoomTags, rawMessage);
 
-            if ($(mutations[0].target).html() != rawMessage) {
-                $(mutations[0].target).html(rawMessage);
-            }
-        })
         var observer = new MutationObserver(function (mutations, observer) {
             for (var mutation of mutations) {
                 for (var addedNode of mutation.addedNodes) {
-                    var messageBody = $(addedNode).find('.body').get(0);
-                    lsObserver.observe(messageBody, {
-                        childList: true,
-                    });
+                    var messageNode = $(addedNode).find('[data-qa-type="message-body"]').get(0);
+                    var rawMessage = $(messageNode).html();
+                    $(messageNode).find('a').each(function (index) {
+                        if (inRoomTags[$(this).text()] === undefined) {
+                            rawMessage = rawMessage.replace(this.outerHTML, '@' + $(this).prop('title'));
+                        }
+                    })
+                    rawMessage = reverseReplaceTags(inRoomTags, rawMessage);
+
+                    if ($(messageNode).html() !== rawMessage) {
+                        $(messageNode).html(rawMessage);
+                    }
                 }
             }
         });
