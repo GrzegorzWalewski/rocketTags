@@ -1,14 +1,339 @@
-(function () {
-    'use strict';
+/**
+ * array of usernames, of people that should have access to configurator
+ * */
+const configurationEditors = ['admin'];
+/**
+ * configurator start command
+ * (just type it in message box and click enter)
+ * */
+const rocketTagsConfiguratorCommand = 'grzojda_rocketTags_configurator';
+/**
+ * channel on which configuration will be sent
+ * If it does not exist we'll create it for You, no worries
+ * */
+const configurationChannelName = 'grzojdaRocketTags';
+/**
+ * Time after which we will be checking for new configuration.
+ * Set to 0 to check for updates every time user changes room (not recommended)
+ * */
+const configurationSyncIntervalInSec = 21600;
 
-    /**
-     * IT IS SUPER IMPORTANT TO SET THIS
-     **/
-    var rocketTagsConfigurationFileUrl = 'YOUR_CONFIGURATION_URL';
+/******************************
+ * DO NOT TOUCH WHAT IS BELOW *
+ ******************************/
 
+class RocketTags {
+    messageInputNodes;
+    tags = {};
+    roomMembers;
+    inRoomTags;
+    myUsername;
+    userNotInGroupMention = '<a class="mention-link mention-link--user" data-username="groupName" data-title="groupName" data-tooltip="groupName">groupName</a>';
+    userInGroupMention = '<a class="mention-link mention-link--all mention-link--group" data-group="groupName">groupName</a>';
+    tagMentionTemplate = `<div id="mentionTAGNAME" class="popup-item" data-id="TAGNAME"><div class="popup-user" title=""><div class="popup-user-name"><strong>TAGNAME</strong> Notify TAGNAME in this room</div><div class="popup-user-notice">Added by Grzojda's RocketTags</div></div></div>`;
 
-    console.log('START');
-    var configuratorHtmlCode = `<body>
+    constructor(apiCaller, rocketTagsConfigurator, configurationEditors, configurationSyncIntervalInSec) {
+        this.rocketTagsConfigurator = rocketTagsConfigurator;
+        this.apiCaller = apiCaller;
+        this.admins = configurationEditors;
+        this.configurationSyncIntervalInSec = configurationSyncIntervalInSec;
+    }
+
+    async run() {
+        console.log('Grzojda RocketTags: Start');
+        await this.waitForMainNode();
+        this.getDOMVariables();
+        await this.loadTags();
+        await this.loadRoomMembers();
+        this.generateInRoomTags();
+        this.updateLoadedMessages();
+        this.addEventListeners();
+        if (this.admins.includes(this.myUsername)) {
+            this.rocketTagsConfigurator.waitForCommand(this.messageInputNodes, this.tags);
+        }
+    }
+
+    async waitForMainNode() {
+        return await new Promise(resolve => {
+            const waitForMainNode = setInterval(() => {
+                console.log('Grzojda RocketTags: waiting...');
+                if ($('.message-popup-results').length > 0) {
+                    console.log('Grzojda RocketTags: rendered; running script');
+                    resolve(true);
+                    clearInterval(waitForMainNode);
+                }
+            }, 1000);
+        });
+    }
+
+    addEventListeners() {
+        let that = this;
+
+        $('aside').click(function () {
+            that.run();
+        });
+
+        $(this.messageInputNodes).each((key, element) => {
+            $(element).keydown(function (e) {
+                if (!e.shiftKey && e.keyCode === 13 && $('.message-popup-items').get(0) === undefined) {
+                    this.value = that.replaceTags(this.value);
+                }
+            });
+        });
+
+        MutationObserver = window.MutationObserver || window.WebKitMutationObserver;
+
+        var observer = new MutationObserver((mutations, observer) => {
+            for (var mutation of mutations) {
+                for (var addedNode of mutation.addedNodes) {
+                    var messageNode = $(addedNode).find('[data-qa-type="message-body"]').get(0);
+                    var rawMessage = $(messageNode).html();
+                    $(messageNode).find('.mention-link').each(function () {
+                        if (that.inRoomTags[$(this).text()] === undefined) {
+                            rawMessage = rawMessage.replace(this.outerHTML, '@' + $(this).prop('title'));
+                        }
+                    })
+                    var originalRaw = rawMessage;
+                    rawMessage = this.reverseReplaceTags(rawMessage);
+
+                    if (originalRaw !== rawMessage) {
+                        $(messageNode).html(rawMessage);
+                    }
+                }
+            }
+        });
+
+        observer.observe($('ul').get(0), {
+            childList: true,
+            childTree: true
+        });
+        var mentionOptions = new MutationObserver((mutations, observer) => {
+            for (var mutation of mutations) {
+                for (var addedNode of mutation.addedNodes) {
+                    var popupMessageItems = $(addedNode).find('.message-popup-items').get(0);
+                    if (popupMessageItems !== undefined) {
+                        for (var inRoomTag in that.inRoomTags) {
+                            if (that.inRoomTags[inRoomTag].length !== 0) {
+                                $(popupMessageItems).append(this.getTagMention(inRoomTag));
+                                this.addMentionClickListener(inRoomTag);
+                            }
+                        }
+                    }
+                }
+            }
+
+        });
+
+        mentionOptions.observe($('.message-popup-results').get(0), {
+            childList: true,
+        });
+    }
+
+    replaceTags(text) {
+        for (var inRoomTag in this.inRoomTags) {
+            if (this.inRoomTags[inRoomTag].length !== 0) {
+                text = text.replaceAll('@' + inRoomTag, '@' + this.inRoomTags[inRoomTag].join(' @') + ' ');
+            }
+        }
+
+        return text;
+    }
+
+    async loadTags() {
+        let isTimeForSync = LocalStorageManager.getFromLocalStorage('grzojda_rocketTags_lastUpdate') < ((Date.now()/1000) - this.configurationSyncIntervalInSec);
+
+        if (LocalStorageManager.getFromLocalStorage('grzojda_rocketTags') === null || isTimeForSync) {
+            let channelId = await this.rocketTagsConfigurator.getConfigurationChannel();
+            if (channelId) {
+                this.tags = await this.rocketTagsConfigurator.getLatestConfiguration(channelId);
+                LocalStorageManager.setToLocalStorage('grzojda_rocketTags', this.tags);
+                LocalStorageManager.setToLocalStorage('grzojda_rocketTags_lastUpdate', Date.now()/1000);
+            }
+        } else {
+            this.tags = LocalStorageManager.getFromLocalStorage('grzojda_rocketTags');
+        }
+
+    }
+
+    getDOMVariables() {
+        this.messageInputNodes = $('.js-input-message');
+        this.activeRoom = $('main').attr('data-qa-rc-room');
+        this.myUsername = $($('figure[data-username]')[0]).data('username');
+        this.roomType = 'channels';
+        if (window.location.pathname.includes('group')) {
+            this.roomType = 'groups';
+        } else if (window.location.pathname.includes('direct')) {
+            this.roomType = 'direct';
+        }
+    }
+
+    async loadRoomMembers() {
+        this.roomMembers = [];
+        let names = [];
+        while (true) {
+            if (this.roomType === 'direct') {
+                return;
+            }
+
+            let offset = this.roomMembers.length;
+            let path = "/" + this.roomType + ".members?roomId=" + this.activeRoom + "&offset=" + offset + "&count=100";
+            let response = await this.apiCaller.sendApiCall(path);
+            let data = await response.json();
+            names.push(...data.members);
+
+            if (names.length >= data.total) {
+                this.roomMembers = names.map(a => a.username);
+                break;
+            }
+        }
+    }
+
+    generateInRoomTags() {
+        this.inRoomTags = {};
+        if (this.tags == null) {
+            return;
+        }
+
+        for (let key in this.tags) {
+            this.inRoomTags[key] = [];
+            for (let username of this.tags[key]) {
+                if (this.roomMembers.includes(username)) {
+                    this.inRoomTags[key].push(username);
+                }
+            }
+        }
+    }
+
+    reverseReplaceTags(text) {
+        if (text === undefined) {
+            return text;
+        }
+        for (var inRoomTag in this.inRoomTags) {
+            var tagUsersString = '@' + this.inRoomTags[inRoomTag].join(' @');
+            if (text.includes(tagUsersString) && this.inRoomTags[inRoomTag].length !== 0) {
+                if (!this.inRoomTags[inRoomTag].includes(this.myUsername)) {
+                    text = text.replaceAll(tagUsersString, this.userNotInGroupMention.replaceAll('groupName', inRoomTag));
+                } else {
+                    text = text.replaceAll(tagUsersString, this.userInGroupMention.replaceAll('groupName', inRoomTag));
+                }
+            }
+        }
+
+        return text;
+    }
+
+    getTagMention(inRoomTag) {
+        return this.tagMentionTemplate.replaceAll('TAGNAME', inRoomTag)
+    }
+
+    addMentionClickListener(tagname) {
+        $('#mention' + tagname).click(() => {
+            $('.js-input-message').each(function () {
+                var curPos = this.selectionStart;
+                let inputVal = $(this).val();
+                $(this).val(inputVal.slice(0, curPos) + tagname + inputVal.slice(curPos));
+            });
+        });
+    }
+
+    updateLoadedMessages() {
+        let that = this;
+        $('[data-qa-type="message-body"]').each(function () {
+            var rawMessage = $(this).html();
+            $(this).find('.mention-link').each(function (index) {
+                if (that.inRoomTags[$(this).text()] === undefined) {
+                    rawMessage = rawMessage.replace(this.outerHTML, '@' + $(this).prop('title'));
+                }
+            });
+            var originalRaw = rawMessage;
+            rawMessage = that.reverseReplaceTags(rawMessage);
+
+            if (originalRaw !== rawMessage) {
+                $(this).html(rawMessage);
+            }
+        });
+    }
+}
+
+class LocalStorageManager {
+
+    static getRawFromLocalStorage(name) {
+        return window.localStorage.getItem(name);
+    }
+    static getFromLocalStorage(name) {
+        return JSON.parse(window.localStorage.getItem(name))
+    }
+
+    static setToLocalStorage(name, value) {
+        window.localStorage.setItem(name, JSON.stringify(value));
+    }
+}
+
+class CookieManager {
+    static getCookie (cookieName) {
+        let name = cookieName + "=";
+        let ca = document.cookie.split(';');
+
+        for (let i = 0; i < ca.length; i++) {
+            let c = ca[i].trim();
+            if ((c.indexOf(name)) === 0) {
+                return c.substring(name.length);
+            }
+        }
+
+        return null;
+    }
+}
+
+class ApiHelper {
+    rocketChatApiUrl = window.location.origin + '/api/v1';
+    userToken;
+    userId;
+    constructor(userToken, userId) {
+        this.userToken = userToken;
+        this.userId = userId;
+    }
+
+    async sendApiCallToRawUrl(url) {
+        return await fetch(url, {
+            "credentials": "include",
+            "headers": {
+                "X-User-Id": this.userId,
+                "X-Auth-Token": this.userToken,
+            }
+        });
+    }
+
+    async sendApiCall(path) {
+        const url = this.rocketChatApiUrl + path;
+
+        return await fetch(url, {
+            "credentials": "include",
+            "headers": {
+                "X-User-Id": this.userId,
+                "X-Auth-Token": this.userToken,
+            }
+        });
+    }
+
+    async sendPostApiCall(path, body) {
+        const url = this.rocketChatApiUrl + path;
+
+        return await fetch(url, {
+            "credentials": "include",
+            "headers": {
+                "X-User-Id": this.userId,
+                "X-Auth-Token": this.userToken,
+                "Content-Type": "application/json"
+            },
+            method: "POST",
+            body: JSON.stringify(body)
+        });
+    }
+}
+
+class RocketTagsConfigurator {
+    configuratorHtmlCode = `<body>
   <h1>Grzojda RocketTags Configurator</h1>
   <div>
     <button id="exportButton">Export config file</button>
@@ -154,368 +479,216 @@
     }
   </style>
 </body>`;
-    var configuratorUserTemplate = `<figure aria-label="USERNAME" draggable="true" data-username="USERNAME"><img src="/avatar/USERNAME"><span>USERNAME</span></figure>`;
-    var configuratorTagTemplate = `<div id="TAGNAME" class="tagContainer"><h3 style="">TAGNAME</h3>ENTRIES</div>`;
-    var userNotInGroupMention = '<a class="mention-link mention-link--user" data-username="groupName" data-title="groupName" data-tooltip="groupName">groupName</a>';
-    var userInGroupMention = '<a class="mention-link mention-link--all mention-link--group" data-group="groupName">groupName</a>';
-    var tagMentionTemplate = `<div id="mentionTAGNAME" onclick="" class="popup-item" data-id="TAGNAME"><div class="popup-user" title="">
-<div class="popup-user-name"><strong>TAGNAME</strong> Notify TAGNAME in this room</div>
-<div class="popup-user-notice">Added by Grzojda's RocketTags</div>
-</div></div>`;
-    var rocketChatApiUrl = window.location.origin + '/api/v1';
-    // This url has to link to file shared in rocketchat (can be in direct messages)
+    configuratorUserTemplate = `<figure aria-label="USERNAME" draggable="true" data-username="USERNAME"><img src="/avatar/USERNAME"><span>USERNAME</span></figure>`;
+    configuratorTagTemplate = `<div id="TAGNAME" class="tagContainer"><h3 style="">TAGNAME</h3>ENTRIES</div>`;
+    allUsers;
+    tags;
+    newTagInput;
+    addNewTagButton;
+    apiCaller;
+    command;
+    configurationChannelName;
 
-    var tags = JSON.parse(window.localStorage.getItem('grzojda_rocketTags'));
-    var users = JSON.parse(window.localStorage.getItem('grzojda_rocketTags_users'));
-    if (tags === null || tags === []) {
-        tags = {};
-    }
-    function addMentionToInput(mention) {
-        var input = $('.js-input-message').get(0)
-        var curPos = input.selectionStart;
-        let inputVal = $(input).val();
-        $(input).val(inputVal.slice(0, curPos) + mention + inputVal.slice(curPos));
+    constructor(command, apiCaller, configurationChannelName) {
+        this.command = command;
+        this.apiCaller = apiCaller;
+        this.configurationChannelName = configurationChannelName;
     }
 
-    function getCookie(cookieName) {
-        var name = cookieName + "=";
-        var ca = document.cookie.split(';');
-
-        for (var i = 0; i < ca.length; i++) {
-            var c = ca[i].trim();
-            if ((c.indexOf(name)) == 0) {
-                return c.substr(name.length);
-            }
-
-        }
-
-        return null;
+    async run(tags) {
+        await this.loadUsers();
+        this.tags = tags;
+        $('body').html(this.prepareHtml());
+        this.addTagContainerListeners('.tagContainer');
+        this.getDOMElements();
+        this.addEventListeners();
     }
 
-    function replaceTags(inRoomTags, text) {
-        for (var inRoomTag in inRoomTags) {
-            if (inRoomTags[inRoomTag].length !== 0) {
-                text = text.replaceAll('@' + inRoomTag, '@' + inRoomTags[inRoomTag].join(' @') + ' ');
-            }
-        }
-        return text;
-    }
-
-    function reverseReplaceTags(inRoomTags, text) {
-        if (text === undefined) {
-            return text;
-        }
-        var myUsername = getMyUsername();
-        for (var inRoomTag in inRoomTags) {
-            var tagUsersString = '@' + inRoomTags[inRoomTag].join(' @');
-            if (text.includes(tagUsersString) && inRoomTags[inRoomTag].length !== 0) {
-                if (!inRoomTags[inRoomTag].includes(myUsername)) {
-                    text = text.replaceAll(tagUsersString, userNotInGroupMention.replaceAll('groupName', inRoomTag));
-                } else {
-                    text = text.replaceAll(tagUsersString, userInGroupMention.replaceAll('groupName', inRoomTag));
+    waitForCommand(inputNodes, tags) {
+        let that = this;
+        $(inputNodes).each((key, element) => {
+            $(element).keydown(function (event) {
+                if (!event.shiftKey && event.keyCode === 13 && event.target.value === that.command) {
+                    that.run(tags);
                 }
-            }
-        }
-
-        return text;
-    }
-
-    function* entries(obj) {
-        for (let key of Object.keys(obj)) {
-            yield [key, obj[key]];
-        }
-    }
-
-    function getMyUsername() {
-        return $($('figure[data-username]')[0]).data('username');
-    }
-
-    async function loadConfiguration() {
-        var userToken = getCookie('rc_token')
-        var userId = getCookie('rc_uid')
-        const response = await fetch(rocketTagsConfigurationFileUrl, {
-            "credentials": "include",
-            "headers": {
-                "X-User-Id": userId,
-                "X-Auth-Token": userToken,
-            }
-        })
-        const data = await response.json();
-
-        return data;
-    }
-
-    async function loadUsers(names) {
-        var userToken = getCookie('rc_token')
-        var userId = getCookie('rc_uid')
-        var roomId = $('main').attr('data-qa-rc-room');
-        var offset = names.length;
-        const response = await fetch(rocketChatApiUrl + '/directory?query={"type":"users","workspace":"local", "limit": "100", "offset": "' + offset + '"}', {// {"type":"users", "limit":"100"}
-            "credentials": "include",
-            "headers": {
-                "X-User-Id": userId,
-                "X-Auth-Token": userToken,
-            }
-        })
-        const data = await response.json();
-        names.push(...data.result)
-        if (names.length < data.total) {
-            return loadUsers(names)
-        } else {
-            var usernames = names.map(a => a.username);
-            return usernames;
-        }
-    }
-
-    async function loadChannelMembers(names) {
-        var userToken = getCookie('rc_token')
-        var userId = getCookie('rc_uid')
-        var roomId = $('main').attr('data-qa-rc-room');
-        var offset = names.length;
-        var type = 'channels';
-        if (window.location.pathname.includes('group')) {
-            type = 'groups';
-        } else if (window.location.pathname.includes('direct')) {
-            return [];
-        }
-        const response = await fetch(rocketChatApiUrl + "/" + type + ".members?roomId=" + roomId + "&offset=" + offset + "&count=100", {
-            "credentials": "include",
-            "headers": {
-                "X-User-Id": userId,
-                "X-Auth-Token": userToken,
-            }
-        })
-        const data = await response.json();
-        names.push(...data.members)
-        if (names.length < data.total) {
-            return loadChannelMembers(names)
-        } else {
-            var usernames = names.map(a => a.username);
-            return usernames;
-        }
-    }
-
-    function generateInRoomTags(roomMembers) {
-        var inRoomTags = {};
-        if (tags == null) {
-            return {};
-        }
-        for (let [key, value] of entries(tags)) {
-            inRoomTags[key] = [];
-            for (let username of tags[key]) {
-                if (roomMembers.includes(username)) {
-                    inRoomTags[key].push(username);
-                }
-            }
-        }
-        return inRoomTags;
-    }
-
-    function downloadConfiguration() {
-        var content = window.localStorage.getItem('grzojda_rocketTags');
-        var mimeType = 'application/json';
-        var filename = 'GrzojdaRocketTagsConfiguration.json';
-        const a = document.createElement('a') // Create "a" element
-        const blob = new Blob([content], {type: mimeType}) // Create a blob (file-like object)
-        const url = URL.createObjectURL(blob) // Create an object URL from blob
-        a.setAttribute('href', url) // Set "a" element link
-        a.setAttribute('download', filename) // Set download filename
-        a.click() // Start downloading
-    }
-
-    function addMentionClickListener(tagname)
-    {
-        $('#mention' + tagname).click(function () {
-            var input = $('.js-input-message').get(0)
-            var curPos = input.selectionStart;
-            let inputVal = $(input).val();
-            $(input).val(inputVal.slice(0, curPos) + tagname + inputVal.slice(curPos));
-        })
-    }
-
-    function getTagMention(inRoomTag) {
-        return tagMentionTemplate.replaceAll('TAGNAME', inRoomTag)
-    }
-
-    async function run() {
-        var input = document.getElementsByClassName('js-input-message')[0];
-        input.onkeydown = function (e) {
-            if (!e.shiftKey && e.keyCode === 13 && $('.message-popup-items').get(0) === undefined) {
-                if (input.value === 'grzojda_rocketTags_configurator') {
-                    input.value = '';
-                    runConfigurator();
-                }
-            }
-        }
-
-        if (users == null) {
-            users = await loadUsers([]);
-            window.localStorage.setItem('grzojda_rocketTags_users', JSON.stringify(users));
-        }
-
-        if (rocketTagsConfigurationFileUrl === 'YOUR_CONFIGURATION_URL') {
-            return;
-        }
-        tags = await loadConfiguration();
-        window.localStorage.setItem('grzojda_rocketTags', JSON.stringify(tags));
-
-        var channelMembers = [];
-        channelMembers = await loadChannelMembers(channelMembers);
-        var inRoomTags = generateInRoomTags(channelMembers);
-        MutationObserver = window.MutationObserver || window.WebKitMutationObserver;
-
-        var observer = new MutationObserver(function (mutations, observer) {
-            for (var mutation of mutations) {
-                for (var addedNode of mutation.addedNodes) {
-                    var messageNode = $(addedNode).find('[data-qa-type="message-body"]').get(0);
-                    var rawMessage = $(messageNode).html();
-                    $(messageNode).find('.mention-link').each(function (index) {
-                        if (inRoomTags[$(this).text()] === undefined) {
-                            rawMessage = rawMessage.replace(this.outerHTML, '@' + $(this).prop('title'));
-                        }
-                    })
-                    rawMessage = reverseReplaceTags(inRoomTags, rawMessage);
-
-                    if ($(messageNode).html() !== rawMessage) {
-                        $(messageNode).html(rawMessage);
-                    }
-                }
-            }
+            });
         });
+    }
 
-        observer.observe(document.getElementsByTagName('ul')[0], {
-            childList: true,
-        });
-        var mentionOptions = new MutationObserver(function (mutations, observer) {
-            for (var mutation of mutations) {
-                for (var addedNode of mutation.addedNodes) {
-                    var popupMessageItems = $(addedNode).find('.message-popup-items').get(0);
-                    if (popupMessageItems != undefined) {
-                        for (var inRoomTag in inRoomTags) {
-                            if (inRoomTags[inRoomTag].length != 0) {
-                                $(popupMessageItems).append(getTagMention(inRoomTag));
-                                addMentionClickListener(inRoomTag);
+    async getLatestConfiguration(channelId) {
+        let path = "/channels.messages?roomId=" + channelId + "&count=1";
+        let response = await this.apiCaller.sendApiCall(path);
+        let data = await response.json();
+
+        if (data.success) {
+            return JSON.parse(data.messages[0].blocks[0].text);
+            // data.messages[0].blocks[1].text Gives version string
+        }
+
+        return {};
+    }
+
+    async exportConfiguration() {
+        let channelId = await this.getConfigurationChannel();
+        if (channelId === false) {
+            channelId = await this.createConfigurationChannel();
+        }
+        let sendStatus = await this.sendConfiguration(channelId);
+        console.log(sendStatus);
+    }
+
+    async sendConfiguration(channelId) {
+        let path = '/method.call/sendMessage';
+        let body = {
+            "message": JSON.stringify({
+                "method": "sendMessage",
+                "params": [
+                    {
+                        "rid": channelId,
+                        "blocks": [
+                            {
+                                "type": "section",
+                                "text": LocalStorageManager.getRawFromLocalStorage('grzojda_rocketTags')
+                            },
+                            {
+                                "type": "section",
+                                "text": "Version X" //to be implemented
                             }
-                        }
+                        ]
                     }
-                }
-            }
-
-        });
-
-        mentionOptions.observe(document.getElementsByClassName('message-popup-results')[0], {
-            childList: true,
-        });
-
-
-        $('[data-qa-type="message-body"]').each(function () {
-            var rawMessage = $(this).html();
-            console.log(rawMessage);
-            $(this).find('.mention-link').each(function (index) {
-                if (inRoomTags[$(this).text()] === undefined) {
-                    rawMessage = rawMessage.replace(this.outerHTML, '@' + $(this).prop('title'));
-                }
+                ]
             })
-            rawMessage = reverseReplaceTags(inRoomTags, rawMessage);
+        }
 
-            if ($(this).html() !== rawMessage) {
-                $(this).html(rawMessage);
-            }
-        });
+        let response = await this.apiCaller.sendPostApiCall(path, body);
+        let data = await response.json();
 
-        input.onkeydown = function (e) {
-            if (!e.shiftKey && e.keyCode === 13 && $('.message-popup-items').get(0) == undefined) {
-                input.value = replaceTags(inRoomTags, input.value);
+        return data.success;
+    }
+
+    async createConfigurationChannel() {
+        let path = '/channels.create';
+        let body = {"name": this.configurationChannelName};
+
+        let response = await this.apiCaller.sendPostApiCall(path, body);
+        let data = await response.json();
+
+        if (data.success) {
+            return data.channel._id;
+        }
+
+        return false;
+    }
+
+    async getConfigurationChannel() {
+        let path = '/rooms.info?roomName=' + this.configurationChannelName;
+
+        let response = await this.apiCaller.sendApiCall(path);
+        let data = await response.json();
+        if (data.success) {
+            return data.room._id;
+        }
+
+        return false;
+    }
+
+    async loadUsers() {
+        let names = [];
+        while (true) {
+            let offset = names.length;
+            let path = '/directory?query={"type":"users","workspace":"local", "limit": "100", "offset": "' + offset + '"}';
+            let response = await this.apiCaller.sendApiCall(path);
+            let data = await response.json();
+            names.push(...data.result)
+            if (names.length >= data.total) {
+                this.allUsers = names.map(a => a.username);
+                break;
             }
         }
     }
 
-    function configuratorGenerateTagsContainers() {
+    prepareHtml() {
+        const tagsContainers = this.prepareTagsContainers();
+        const userFigures = this.prepareUserFigures();
+        let html = this.configuratorHtmlCode.replace('FIGURES', userFigures);
+        return html.replace('TAGS', tagsContainers);
+    }
+
+    prepareUserFigures() {
+        var figures = '';
+        for (let username of this.allUsers) {
+            figures += this.configuratorUserTemplate.replaceAll('USERNAME', username);
+        }
+
+        return figures;
+    }
+
+    prepareTagsContainers() {
         var tagsContainers = '';
-        if (tags == null) {
+        if (this.tags == null) {
             return {};
         }
-        for (let [key, values] of entries(tags)) {
-            var tagContainer = configuratorTagTemplate.replaceAll('TAGNAME', key);
+        for (let tag in this.tags) {
+            var tagContainer = this.configuratorTagTemplate.replaceAll('TAGNAME', tag);
             var usernames = '';
-            for (var value of values) {
-                usernames += '<p class="' + value + '"> ' + value + '</p>';
+            for (let username of this.tags[tag]) {
+                usernames += '<p class="' + username + '"> ' + username + '</p>';
             }
             tagsContainers += tagContainer.replace('ENTRIES', usernames);
         }
+
         return tagsContainers;
     }
 
-    function addUserToTag(user, tag) {
-        if (!tags[tag].includes(user)) {
-            tags[tag].push(user);
-            window.localStorage.setItem('grzojda_rocketTags', JSON.stringify(tags));
+    addTagContainerListeners(selector) {
+        let that = this;
+        $(selector).on("drop", function (event) {
+            event.preventDefault();
+            const username = event.originalEvent.dataTransfer.getData('username');
+            that.addUserToTag(username, this.id);
+        });
+        $(selector).on("dragover", event => {
+            event.preventDefault();
+        });
+    }
+
+    addUserToTag(user, tag) {
+        let that = this;
+        if (!this.tags[tag].includes(user)) {
+            this.tags[tag].push(user);
+            LocalStorageManager.setToLocalStorage('grzojda_rocketTags', this.tags);
             $('#' + tag).append('<p class="' + user + '"> ' + user + '</p>');
-            $('#' + tag + ' ' + jqSelector(user)).on('click', function () {
-                configuratorRemoveUserFromTag(this.className, this.parentNode.id);
+            $('#' + tag + ' ' + this.jqSelector(user)).on('click', function () {
+                that.configuratorRemoveUserFromTag(this.className, this.parentNode.id);
             })
         }
     }
 
-    function addTag(tag) {
-        if (tags[tag] == undefined) {
-            var tagContainer = configuratorTagTemplate.replaceAll('TAGNAME', tag);
+    addTag(tag) {
+        if (this.tags[tag] === undefined) {
+            var tagContainer = this.configuratorTagTemplate.replaceAll('TAGNAME', tag);
             tagContainer = tagContainer.replace('ENTRIES', '');
             $('.tags').append(tagContainer);
-            addTagContainerListeners('#' + tag);
-            tags[tag] = [];
-            window.localStorage.setItem('grzojda_rocketTags', JSON.stringify(tags));
+            this.addTagContainerListeners('#' + tag);
+            this.tags[tag] = [];
+            LocalStorageManager.setToLocalStorage('grzojda_rocketTags', this.tags);
         }
     }
 
-    function configuratorRemoveUserFromTag(user, tag) {
-        var index = tags[tag].indexOf(user);
-        tags[tag].splice(index, 1);
-        window.localStorage.setItem('grzojda_rocketTags', JSON.stringify(tags));
-        $('#' + tag + ' ' + jqSelector(user)).remove();
-    }
-
-    function jqSelector(user) {
-        return "." + user.replace(/(:|\.|\[|\]|,)/g, "\\$1");
-    }
-
-    function addTagContainerListeners(selector) {
-        $('.tagContainer').on("drop", function (event) {
-            event.preventDefault();
-            const username = event.originalEvent.dataTransfer.getData('username');
-            addUserToTag(username, this.id);
-        });
-        $('.tagContainer').on("dragover", function (event) {
-            event.preventDefault();
-        });
-    }
-
-    async function runConfigurator() {
-        var figures = '';
-        for (let [key, username] of entries(users)) {
-            figures += configuratorUserTemplate.replaceAll('USERNAME', username);
-        }
-        var tagsContainers = configuratorGenerateTagsContainers();
-
-        var html = configuratorHtmlCode.replace('FIGURES', figures);
-        html = html.replace('TAGS', tagsContainers);
-
-        $('body').html(html);
-
-        addTagContainerListeners('.tagContainer')
-
-        $('#addNewTagButton').on('click', function () {
-            if ($('#newTagInput').val() != '') {
-                addTag($('#newTagInput').val());
-                $('newTagInput').val('');
+    addEventListeners() {
+        let that = this;
+        this.addNewTagButton.on('click', () => {
+            if (this.newTagInput.val() !== '') {
+                this.addTag(this.newTagInput.val());
+                this.newTagInput.val('');
             }
         });
 
-        $('#exportButton').on('click', function () {
-            downloadConfiguration();
+        $('#exportButton').on('click', () => {
+            that.exportConfiguration();
         });
 
-        $('#exitButton').on('click', function () {
+        $('#exitButton').on('click', () => {
             location.reload();
         })
 
@@ -524,26 +697,28 @@
         });
 
         $('.tags p').on('click', function () {
-            configuratorRemoveUserFromTag(this.className, this.parentNode.id);
-        })
+            that.configuratorRemoveUserFromTag(this.className, this.parentNode.id);
+        });
     }
 
-    var waitForMainNode = setInterval(function () {
-        console.log('waiting...');
-        if ($('.message-popup-results').length > 0) {
-            console.log('rendered; running script');
-            run();
-            $('aside').on('click', function () {
-                var waitForMainNode = setInterval(function () {
-                    console.log('waiting...');
-                    if ($('.message-popup-results').length > 0) {
-                        console.log('rendered; running script');
-                        clearInterval(waitForMainNode);
-                        run();
-                    }
-                }, 1000);
-            });
-            clearInterval(waitForMainNode);
-        }
-    }, 1000)
-})();
+    configuratorRemoveUserFromTag(user, tag) {
+        var index = this.tags[tag].indexOf(user);
+        this.tags[tag].splice(index, 1);
+        LocalStorageManager.setToLocalStorage('grzojda_rocketTags', this.tags);
+        $('#' + tag + ' ' + this.jqSelector(user)).remove();
+    }
+
+    getDOMElements() {
+        this.newTagInput = $('#newTagInput');
+        this.addNewTagButton = $('#addNewTagButton');
+    }
+
+    jqSelector(user) {
+        return "." + user.replace(/(:|\.|\[|\]|,)/g, "\\$1");
+    }
+}
+
+const ApiCaller = new ApiHelper(CookieManager.getCookie('rc_token'), CookieManager.getCookie('rc_uid'));
+const rocketTagsConfigurator = new RocketTagsConfigurator(rocketTagsConfiguratorCommand, ApiCaller, configurationChannelName);
+const rocketTags = new RocketTags(ApiCaller, rocketTagsConfigurator, configurationEditors, configurationSyncIntervalInSec);
+rocketTags.run();
