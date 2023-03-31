@@ -107,26 +107,6 @@ class RocketTags {
             childList: true,
             childTree: true
         });
-        var mentionOptions = new MutationObserver((mutations, observer) => {
-            for (var mutation of mutations) {
-                for (var addedNode of mutation.addedNodes) {
-                    var popupMessageItems = $(addedNode).find('.message-popup-items').get(0);
-                    if (popupMessageItems !== undefined) {
-                        for (var inRoomTag in that.inRoomTags) {
-                            if (that.inRoomTags[inRoomTag].length !== 0) {
-                                $(popupMessageItems).append(this.getTagMention(inRoomTag));
-                                this.addMentionClickListener(inRoomTag);
-                            }
-                        }
-                    }
-                }
-            }
-
-        });
-
-        mentionOptions.observe($('.message-popup-results').get(0), {
-            childList: true,
-        });
     }
 
     replaceTags(text) {
@@ -140,14 +120,14 @@ class RocketTags {
     }
 
     async loadTags() {
-        let isTimeForSync = LocalStorageManager.getFromLocalStorage('grzojda_rocketTags_lastUpdate') < ((Date.now()/1000) - this.configurationSyncIntervalInSec);
+        let isTimeForSync = LocalStorageManager.getFromLocalStorage('grzojda_rocketTags_lastUpdate') < ((Date.now() / 1000) - this.configurationSyncIntervalInSec);
 
         if (LocalStorageManager.getFromLocalStorage('grzojda_rocketTags') === null || isTimeForSync) {
             let channelId = await this.rocketTagsConfigurator.getConfigurationChannel();
             if (channelId) {
                 this.tags = await this.rocketTagsConfigurator.getLatestConfiguration(channelId);
                 LocalStorageManager.setToLocalStorage('grzojda_rocketTags', this.tags);
-                LocalStorageManager.setToLocalStorage('grzojda_rocketTags_lastUpdate', Date.now()/1000);
+                LocalStorageManager.setToLocalStorage('grzojda_rocketTags_lastUpdate', Date.now() / 1000);
             }
         } else {
             this.tags = LocalStorageManager.getFromLocalStorage('grzojda_rocketTags');
@@ -202,6 +182,24 @@ class RocketTags {
                 }
             }
         }
+
+        return this.inRoomTags;
+    }
+
+    searchForTags(searchQuery) {
+        let that = this;
+        searchQuery = searchQuery.toLowerCase();
+        console.log(searchQuery);
+        console.log(this.generateInRoomTags());
+        var result = [];
+        for (var inRoomTag in this.generateInRoomTags()) {
+            var lowerCaseInRoomTag = inRoomTag.toLowerCase();
+            if (that.inRoomTags[inRoomTag].length !== 0 && (lowerCaseInRoomTag.includes(searchQuery) || searchQuery.length === 0)) {
+                result.push(this.getTagUserObject(inRoomTag));
+            }
+        }
+
+        return result;
     }
 
     reverseReplaceTags(text) {
@@ -222,6 +220,21 @@ class RocketTags {
         return text;
     }
 
+    getTagUserObject(tag) {
+        return {
+            _id: tag,
+            avatarTag: tag,
+            name: tag,
+            nickname: tag,
+            status: "online",
+            statusText: "Doing the hard work",
+            username: tag
+        };
+    }
+
+    /**
+     * @deprecated
+     */
     getTagMention(inRoomTag) {
         return this.tagMentionTemplate.replaceAll('TAGNAME', inRoomTag)
     }
@@ -270,7 +283,7 @@ class LocalStorageManager {
 }
 
 class CookieManager {
-    static getCookie (cookieName) {
+    static getCookie(cookieName) {
         let name = cookieName + "=";
         let ca = document.cookie.split(';');
 
@@ -568,7 +581,7 @@ class RocketTagsConfigurator {
 
     async createConfigurationChannel() {
         let path = '/channels.create';
-        let body = {"name": this.configurationChannelName};
+        let body = { "name": this.configurationChannelName };
 
         let response = await this.apiCaller.sendPostApiCall(path, body);
         let data = await response.json();
@@ -718,7 +731,72 @@ class RocketTagsConfigurator {
     }
 }
 
+class XMLHelper {
+    onStateChange(event) {
+        console.log(event);
+        if (event.target.response !== undefined) {
+            var response = JSON.parse(event.target.response);
+            if (response.message !== undefined) {
+                var message = JSON.parse(response.message);
+                if (globalSendMessages[message.id] !== undefined) {
+                    var searchQuery = globalSendMessages[message.id];
+
+                    var tagUsers = rocketTags.searchForTags(searchQuery);
+                    var originalResult = message.result.users;
+                    if (originalResult !== undefined) {
+                        console.log(tagUsers);
+                        message.result.users.push(...tagUsers)
+                    } else {
+                        message.result = {
+                            users: tagUsers
+                        }
+                    }
+
+                    message = JSON.stringify(message);
+                    response.message = message;
+
+                    Object.defineProperty(event.target, 'response', {
+                        writable: true
+                    });
+                    Object.defineProperty(event.target, 'responseText', {
+                        writable: true
+                    });
+                    event.target.response = JSON.stringify(response);
+                    event.target.responseText = JSON.stringify(response);
+                    globalSendMessages.splice(message.id, 1);
+                }
+            }
+        }
+    }
+}
+
 const ApiCaller = new ApiHelper(CookieManager.getCookie('rc_token'), CookieManager.getCookie('rc_uid'));
 const rocketTagsConfigurator = new RocketTagsConfigurator(rocketTagsConfiguratorCommand, ApiCaller, configurationChannelName);
 const rocketTags = new RocketTags(ApiCaller, rocketTagsConfigurator, configurationEditors, configurationSyncIntervalInSec);
+const xmlHelper = new XMLHelper();
+var oldOpen = XMLHttpRequest.prototype.open;
+var oldSend = XMLHttpRequest.prototype.send;
+var globalSendMessages = [];
+
+// XHR open and send methods are overwritten so we can "inject" our "users"
+XMLHttpRequest.prototype.open = function () {
+    // when an XHR object is opened, add a listener for its load events
+    this.addEventListener("load", xmlHelper.onStateChange);
+    // run the real `open`
+    oldOpen.apply(this, arguments);
+}
+
+XMLHttpRequest.prototype.send = function () {
+    parsedArguments = JSON.parse(arguments[0])
+    message = JSON.parse(parsedArguments.message);
+    messageMethod = message.method;
+    if (messageMethod === 'spotlight') {
+        messageId = message.id;
+        queryString = message.params[0];
+        globalSendMessages[messageId] = queryString;
+    }
+
+    oldSend.apply(this, arguments);
+}
+
 rocketTags.run();
