@@ -30,7 +30,6 @@ class RocketTags {
     myUsername;
     userNotInGroupMention = '<a class="mention-link mention-link--user" data-username="groupName" data-title="groupName" data-tooltip="groupName">groupName</a>';
     userInGroupMention = '<a class="mention-link mention-link--all mention-link--group" data-group="groupName">groupName</a>';
-    tagMentionTemplate = `<div id="mentionTAGNAME" class="popup-item" data-id="TAGNAME"><div class="popup-user" title=""><div class="popup-user-name"><strong>TAGNAME</strong> Notify TAGNAME in this room</div><div class="popup-user-notice">Added by Grzojda's RocketTags</div></div></div>`;
 
     constructor(apiCaller, rocketTagsConfigurator, configurationEditors, configurationSyncIntervalInSec) {
         this.rocketTagsConfigurator = rocketTagsConfigurator;
@@ -186,22 +185,78 @@ class RocketTags {
         return this.inRoomTags;
     }
 
-    searchForTags(searchQuery) {
+    searchForTags(searchQuery = '') {
         let that = this;
         searchQuery = searchQuery.toLowerCase();
-        console.log(searchQuery);
-        console.log(this.generateInRoomTags());
         var result = [];
-        for (var inRoomTag in this.generateInRoomTags()) {
+        var inRoomTags = this.generateInRoomTags();
+        for (var inRoomTag in inRoomTags) {
             var lowerCaseInRoomTag = inRoomTag.toLowerCase();
-            if (that.inRoomTags[inRoomTag].length !== 0 && (lowerCaseInRoomTag.includes(searchQuery) || searchQuery.length === 0)) {
+            console.log(lowerCaseInRoomTag);
+            if (inRoomTags[inRoomTag].length !== 0 && (lowerCaseInRoomTag.includes(searchQuery) || searchQuery.length === 0)) {
                 result.push(this.getTagUserObject(inRoomTag));
             }
         }
-
         return result;
     }
 
+    reverseSearchForTags(mentions, mdIndex) {
+        var inRoomTags = this.generateInRoomTags();
+        for (var index in inRoomTags) {
+            var rocketTagUsers = inRoomTags[index].filter(Boolean).join();
+            var mentionsUsers = mentions.filter(Boolean).join();
+            if (inRoomTags[index].length > 1 && rocketTagUsers != "" && mentionsUsers.includes(rocketTagUsers)) {
+                if (rocketTagUsers != mentionsUsers) {
+                    for (var key in mentions) {
+                        if (!rocketTagUsers.includes(mentions[key])) {
+                            mentions.splice(key, 1);
+                        }
+                    }
+                }
+                for (var key in mentions) {
+                    mds[mdIndex].value[key] = undefined;
+                }
+
+                mds[mdIndex].value[key] = {
+                    type: "MENTION_USER",
+                    value: {
+                        type: "PLAIN_TEXT",
+                        value: index
+                    }
+                }
+                for (var mentionIndex in mentionElem) {
+                    if (mentionElem[mentionIndex] != undefined && mentions.includes(mentionElem[mentionIndex].username)) {
+                        mentionElem[mentionIndex] = undefined;
+                        var lastMentionIndex = mentionIndex;
+                    }
+                }
+                mentionElem[lastMentionIndex] = {
+                    _id: index,
+                    name: index,
+                    type: 'user',
+                    username: index
+                }
+                var mentionString = "@" + mentions.filter(Boolean).join(' @');
+                msg = msg.replaceAll(mentionString, "@" + index);
+            }
+        }
+
+        for (var key in mds[mdIndex].value) {
+            if (mds[mdIndex].value[key] === undefined) {
+                mds[mdIndex].value.splice(key, 1);
+            }
+        }
+
+        for (var key in mentionElem) {
+            if (mentionElem[key] === undefined) {
+                mentionElem.splice(key, 1);
+            }
+        }
+    }
+
+    /**
+     * @deprecated
+     */
     reverseReplaceTags(text) {
         if (text === undefined) {
             return text;
@@ -230,13 +285,6 @@ class RocketTags {
             statusText: "Doing the hard work",
             username: tag
         };
-    }
-
-    /**
-     * @deprecated
-     */
-    getTagMention(inRoomTag) {
-        return this.tagMentionTemplate.replaceAll('TAGNAME', inRoomTag)
     }
 
     addMentionClickListener(tagname) {
@@ -547,7 +595,6 @@ class RocketTagsConfigurator {
             channelId = await this.createConfigurationChannel();
         }
         let sendStatus = await this.sendConfiguration(channelId);
-        console.log(sendStatus);
     }
 
     async sendConfiguration(channelId) {
@@ -609,7 +656,7 @@ class RocketTagsConfigurator {
         let names = [];
         while (true) {
             let offset = names.length;
-            let path = '/directory?query={"type":"users","workspace":"local", "limit": "100", "offset": "' + offset + '"}';
+            let path = '/directory?query={"type":"users","workspace":"local", "limit": "100"}&offset=' + offset;
             let response = await this.apiCaller.sendApiCall(path);
             let data = await response.json();
             names.push(...data.result)
@@ -733,10 +780,10 @@ class RocketTagsConfigurator {
 
 class XMLHelper {
     onStateChange(event) {
-        console.log(event);
         if (event.target.response !== undefined) {
             var response = JSON.parse(event.target.response);
             if (response.message !== undefined) {
+                //add rocketTags to popup
                 var message = JSON.parse(response.message);
                 if (globalSendMessages[message.id] !== undefined) {
                     var searchQuery = globalSendMessages[message.id];
@@ -744,7 +791,6 @@ class XMLHelper {
                     var tagUsers = rocketTags.searchForTags(searchQuery);
                     var originalResult = message.result.users;
                     if (originalResult !== undefined) {
-                        console.log(tagUsers);
                         message.result.users.push(...tagUsers)
                     } else {
                         message.result = {
@@ -764,19 +810,67 @@ class XMLHelper {
                     event.target.response = JSON.stringify(response);
                     event.target.responseText = JSON.stringify(response);
                     globalSendMessages.splice(message.id, 1);
+                } else if (message.result !== undefined) {
+                    //change usernames to tags in downloaded messages
+                    if (message.result.messages !== undefined) {
+                        var messages = message.result.messages;
+                        for (var key in messages) {
+                            var originalResult = messages[key];
+                            var mentions = [];
+                            mds = originalResult.md;
+                            mentionElem = originalResult.mentions;
+                            msg = originalResult.msg;
+
+                            //foreach paragraph
+                            for (var index in mds) {
+                                //foreach object in paragraph
+                                var mdValue = mds[index].value;
+                                for (var oindex in mdValue) {
+                                    if (mdValue[oindex].type === "MENTION_USER") {
+                                        mentions[oindex] = mdValue[oindex].value.value;
+                                    } else if (mdValue[oindex].type !== "PLAIN_TEXT" || mdValue[oindex].value != " ") {
+                                        rocketTags.reverseSearchForTags(mentions, index)
+                                        mentions = [];
+                                    }
+                                }
+                                if (mentions.length != 0) {
+                                    rocketTags.reverseSearchForTags(mentions, index);
+                                    mentions = [];
+                                }
+                            }
+                            originalResult.md = mds;
+                            originalResult.mentions = mentionElem;
+                            originalResult.msg = msg;
+                            message.result.messages[key] = originalResult;
+                        }
+                        message = JSON.stringify(message);
+                        response.message = message;
+
+                        Object.defineProperty(event.target, 'response', {
+                            writable: true
+                        });
+                        Object.defineProperty(event.target, 'responseText', {
+                            writable: true
+                        });
+                        event.target.response = JSON.stringify(response);
+                        event.target.responseText = JSON.stringify(response);
+                    }
                 }
             }
         }
     }
 }
 
+var mds = '';
+var mentionElem = '';
+var msg = '';
+var globalSendMessages = [];
 const ApiCaller = new ApiHelper(CookieManager.getCookie('rc_token'), CookieManager.getCookie('rc_uid'));
 const rocketTagsConfigurator = new RocketTagsConfigurator(rocketTagsConfiguratorCommand, ApiCaller, configurationChannelName);
 const rocketTags = new RocketTags(ApiCaller, rocketTagsConfigurator, configurationEditors, configurationSyncIntervalInSec);
 const xmlHelper = new XMLHelper();
 var oldOpen = XMLHttpRequest.prototype.open;
 var oldSend = XMLHttpRequest.prototype.send;
-var globalSendMessages = [];
 
 // XHR open and send methods are overwritten so we can "inject" our "users"
 XMLHttpRequest.prototype.open = function () {
@@ -787,15 +881,17 @@ XMLHttpRequest.prototype.open = function () {
 }
 
 XMLHttpRequest.prototype.send = function () {
-    parsedArguments = JSON.parse(arguments[0])
-    message = JSON.parse(parsedArguments.message);
-    messageMethod = message.method;
+    var parsedArguments = JSON.parse(arguments[0])
+    if (parsedArguments) {
+      var message = JSON.parse(parsedArguments.message);
+    var messageMethod = message.method;
     if (messageMethod === 'spotlight') {
-        messageId = message.id;
-        queryString = message.params[0];
+        var messageId = message.id;
+        var queryString = message.params[0];
         globalSendMessages[messageId] = queryString;
     }
-
+    }
+    
     oldSend.apply(this, arguments);
 }
 
