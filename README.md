@@ -27,14 +27,10 @@ Main goal of this project is to add tag mention to RocketChat. I'm advanced Disc
 1. After configuration comes best part. Using!
 2. So if You type '@' in message box, in pop-up You should see tags that can be used
 3. Click with mouse or select with arrows and click enter
-4. Send Your message BY CLICKING ENTER (Yeah, click on send button doesn't work rn)
+4. Send Your message
 5. If You find any bugs, let me know I will fix 'em when I will get another productivity kick ;)
 
 ## To be implemented / Fixed
 1. Add simple version control
-2. If there are 2 tags `test` and `test2`, and we mention `@test2` then it's replaced to `@user 2`. We have to change replaceAll with some regex magic that will prevent it to happen.
-3. In newer version of rocket-chat messages are inside div elements. For these versions this script for now doesn't work. - Have to test it with 0.0.3, I think I managed to fix this issue
-4. Check if everything works with threads
-5. Better styling
-6. Show pop-up with options starting with. Eg. user types "@b", we don't want @frontend to show up; when started typing after `@` and selected mention from pop-up mention is added after user typed chars.
-7. Update message also when send button is clicked, not only Enter
+2. Check if everything works with threads
+3. Better styling

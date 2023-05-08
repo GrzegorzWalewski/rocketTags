@@ -10,3 +10,6 @@
  - Cleaned up code
  - Change the way configuration is saved and sync-ed
  - Updated Readme
+
+ ## 0.0.4
+ - Change replace method. Right now tags are replaced directly in request, without need of any event listeners

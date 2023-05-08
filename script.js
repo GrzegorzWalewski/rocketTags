@@ -28,9 +28,8 @@ class RocketTags {
     roomMembers;
     inRoomTags;
     myUsername;
-    userNotInGroupMention = '<a class="mention-link mention-link--user" data-username="groupName" data-title="groupName" data-tooltip="groupName">groupName</a>';
-    userInGroupMention = '<a class="mention-link mention-link--all mention-link--group" data-group="groupName">groupName</a>';
-    tagMentionTemplate = `<div id="mentionTAGNAME" class="popup-item" data-id="TAGNAME"><div class="popup-user" title=""><div class="popup-user-name"><strong>TAGNAME</strong> Notify TAGNAME in this room</div><div class="popup-user-notice">Added by Grzojda's RocketTags</div></div></div>`;
+    userNotInGroupMention = '<a class="mention-link mention-link--user" data-username="groupName" data-title="groupName" data-tooltip="userList">groupName</a>';
+    userInGroupMention = '<a class="mention-link mention-link--all mention-link--group" data-group="groupName" data-tooltip="userList">groupName</a>';
 
     constructor(apiCaller, rocketTagsConfigurator, configurationEditors, configurationSyncIntervalInSec) {
         this.rocketTagsConfigurator = rocketTagsConfigurator;
@@ -41,71 +40,20 @@ class RocketTags {
 
     async run() {
         console.log('Grzojda RocketTags: Start');
-        await this.waitForMainNode();
         this.getDOMVariables();
         await this.loadTags();
         await this.loadRoomMembers();
-        this.generateInRoomTags();
-        this.updateLoadedMessages();
         this.addEventListeners();
         if (this.admins.includes(this.myUsername)) {
             this.rocketTagsConfigurator.waitForCommand(this.messageInputNodes, this.tags);
         }
     }
 
-    async waitForMainNode() {
-        return await new Promise(resolve => {
-            const waitForMainNode = setInterval(() => {
-                console.log('Grzojda RocketTags: waiting...');
-                if ($('.message-popup-results').length > 0) {
-                    console.log('Grzojda RocketTags: rendered; running script');
-                    resolve(true);
-                    clearInterval(waitForMainNode);
-                }
-            }, 1000);
-        });
-    }
-
     addEventListeners() {
         let that = this;
 
-        $('aside').click(function () {
-            that.run();
-        });
-
-        $(this.messageInputNodes).each((key, element) => {
-            $(element).keydown(function (e) {
-                if (!e.shiftKey && e.keyCode === 13 && $('.message-popup-items').get(0) === undefined) {
-                    this.value = that.replaceTags(this.value);
-                }
-            });
-        });
-
-        MutationObserver = window.MutationObserver || window.WebKitMutationObserver;
-
-        var observer = new MutationObserver((mutations, observer) => {
-            for (var mutation of mutations) {
-                for (var addedNode of mutation.addedNodes) {
-                    var messageNode = $(addedNode).find('[data-qa-type="message-body"]').get(0);
-                    var rawMessage = $(messageNode).html();
-                    $(messageNode).find('.mention-link').each(function () {
-                        if (that.inRoomTags[$(this).text()] === undefined) {
-                            rawMessage = rawMessage.replace(this.outerHTML, '@' + $(this).prop('title'));
-                        }
-                    })
-                    var originalRaw = rawMessage;
-                    rawMessage = this.reverseReplaceTags(rawMessage);
-
-                    if (originalRaw !== rawMessage) {
-                        $(messageNode).html(rawMessage);
-                    }
-                }
-            }
-        });
-
-        observer.observe($('ul').get(0), {
-            childList: true,
-            childTree: true
+        window.addEventListener('new-message', function(e) {
+            document.getElementById(e.detail._id).innerHTML = that.reverseReplaceTags(document.getElementById(e.detail._id).innerHTML);
         });
     }
 
@@ -137,26 +85,50 @@ class RocketTags {
 
     getDOMVariables() {
         this.messageInputNodes = $('.js-input-message');
-        this.activeRoom = $('main').attr('data-qa-rc-room');
         this.myUsername = $($('figure[data-username]')[0]).data('username');
-        this.roomType = 'channels';
-        if (window.location.pathname.includes('group')) {
-            this.roomType = 'groups';
-        } else if (window.location.pathname.includes('direct')) {
-            this.roomType = 'direct';
-        }
     }
 
     async loadRoomMembers() {
         this.roomMembers = [];
         let names = [];
+
+        this.roomType = 'channels';
+        if (window.location.pathname.includes('group')) {
+            this.roomType = 'groups';
+            var path = window.location.pathname;
+            if (path.indexOf('group/') + 5 != path.lastIndexOf('/'))
+            {
+                var activeRoom = path.substring(
+                    path.indexOf("group/") + 6, 
+                    path.lastIndexOf("/")
+                );
+            } else {
+                var activeRoom = path.substring(path.indexOf("group/") + 6);
+            }
+        } else if (window.location.pathname.includes('direct')) {
+            this.roomType = 'direct';
+        } else {
+            var path = window.location.pathname;
+            if (path.indexOf('channels/') + 8 != path.lastIndexOf('/'))
+            {
+                var activeRoom = path.substring(
+                    path.indexOf("group/") + 9, 
+                    path.lastIndexOf("/")
+                );
+            } else {
+                var activeRoom = path.substring(path.indexOf("group/") + 9);
+            }
+        }
+
+        this.activeRoom = activeRoom;
+
         while (true) {
             if (this.roomType === 'direct') {
                 return;
             }
 
             let offset = this.roomMembers.length;
-            let path = "/" + this.roomType + ".members?roomId=" + this.activeRoom + "&offset=" + offset + "&count=100";
+            let path = "/" + this.roomType + ".members?roomName=" + this.activeRoom + "&offset=" + offset + "&count=100";
             let response = await this.apiCaller.sendApiCall(path);
             let data = await response.json();
             names.push(...data.members);
@@ -186,20 +158,73 @@ class RocketTags {
         return this.inRoomTags;
     }
 
-    searchForTags(searchQuery) {
+    searchForTags(searchQuery = '') {
         let that = this;
         searchQuery = searchQuery.toLowerCase();
-        console.log(searchQuery);
-        console.log(this.generateInRoomTags());
         var result = [];
-        for (var inRoomTag in this.generateInRoomTags()) {
+        var inRoomTags = this.generateInRoomTags();
+        for (var inRoomTag in inRoomTags) {
             var lowerCaseInRoomTag = inRoomTag.toLowerCase();
-            if (that.inRoomTags[inRoomTag].length !== 0 && (lowerCaseInRoomTag.includes(searchQuery) || searchQuery.length === 0)) {
-                result.push(this.getTagUserObject(inRoomTag));
+            console.log(lowerCaseInRoomTag);
+            if (inRoomTags[inRoomTag].length !== 0 && (lowerCaseInRoomTag.includes(searchQuery) || searchQuery.length === 0)) {
+                result.push(this.getTagUserObject(inRoomTag, inRoomTags[inRoomTag]));
+            }
+        }
+        return result;
+    }
+
+    reverseSearchForTags(mentions, mdIndex) {
+        var inRoomTags = this.generateInRoomTags();
+        for (var index in inRoomTags) {
+            var rocketTagUsers = inRoomTags[index].filter(Boolean).join();
+            var mentionsUsers = mentions.filter(Boolean).join();
+            if (inRoomTags[index].length > 1 && rocketTagUsers != "" && mentionsUsers.includes(rocketTagUsers)) {
+                if (rocketTagUsers != mentionsUsers) {
+                    for (var key in mentions) {
+                        if (!rocketTagUsers.includes(mentions[key])) {
+                            mentions.splice(key, 1);
+                        }
+                    }
+                }
+                for (var key in mentions) {
+                    mds[mdIndex].value[key] = undefined;
+                }
+
+                mds[mdIndex].value[key] = {
+                    type: "MENTION_USER",
+                    value: {
+                        type: "PLAIN_TEXT",
+                        value: index
+                    }
+                }
+                for (var mentionIndex in mentionElem) {
+                    if (mentionElem[mentionIndex] != undefined && mentions.includes(mentionElem[mentionIndex].username)) {
+                        mentionElem[mentionIndex] = undefined;
+                        var lastMentionIndex = mentionIndex;
+                    }
+                }
+                mentionElem[lastMentionIndex] = {
+                    _id: index,
+                    name: index,
+                    type: 'user',
+                    username: inRoomTags[index].join("_-_")
+                }
+                var mentionString = "@" + mentions.filter(Boolean).join(' @');
+                msg = msg.replaceAll(mentionString, "@" + inRoomTags[index].join("_-_"));
             }
         }
 
-        return result;
+        for (var key in mds[mdIndex].value) {
+            if (mds[mdIndex].value[key] === undefined) {
+                mds[mdIndex].value.splice(key, 1);
+            }
+        }
+
+        for (var key in mentionElem) {
+            if (mentionElem[key] === undefined) {
+                mentionElem.splice(key, 1);
+            }
+        }
     }
 
     reverseReplaceTags(text) {
@@ -214,29 +239,23 @@ class RocketTags {
                 } else {
                     text = text.replaceAll(tagUsersString, this.userInGroupMention.replaceAll('groupName', inRoomTag));
                 }
+                text = text.replaceAll('userList', text);
             }
         }
 
         return text;
     }
 
-    getTagUserObject(tag) {
+    getTagUserObject(tag, users) {
         return {
             _id: tag,
             avatarTag: tag,
-            name: tag,
-            nickname: tag,
+            name: users.toString(),
+            nickname: "GrzojdaRocketTags",
             status: "online",
             statusText: "Doing the hard work",
             username: tag
         };
-    }
-
-    /**
-     * @deprecated
-     */
-    getTagMention(inRoomTag) {
-        return this.tagMentionTemplate.replaceAll('TAGNAME', inRoomTag)
     }
 
     addMentionClickListener(tagname) {
@@ -246,24 +265,6 @@ class RocketTags {
                 let inputVal = $(this).val();
                 $(this).val(inputVal.slice(0, curPos) + tagname + inputVal.slice(curPos));
             });
-        });
-    }
-
-    updateLoadedMessages() {
-        let that = this;
-        $('[data-qa-type="message-body"]').each(function () {
-            var rawMessage = $(this).html();
-            $(this).find('.mention-link').each(function (index) {
-                if (that.inRoomTags[$(this).text()] === undefined) {
-                    rawMessage = rawMessage.replace(this.outerHTML, '@' + $(this).prop('title'));
-                }
-            });
-            var originalRaw = rawMessage;
-            rawMessage = that.reverseReplaceTags(rawMessage);
-
-            if (originalRaw !== rawMessage) {
-                $(this).html(rawMessage);
-            }
         });
     }
 }
@@ -547,7 +548,6 @@ class RocketTagsConfigurator {
             channelId = await this.createConfigurationChannel();
         }
         let sendStatus = await this.sendConfiguration(channelId);
-        console.log(sendStatus);
     }
 
     async sendConfiguration(channelId) {
@@ -609,7 +609,7 @@ class RocketTagsConfigurator {
         let names = [];
         while (true) {
             let offset = names.length;
-            let path = '/directory?query={"type":"users","workspace":"local", "limit": "100", "offset": "' + offset + '"}';
+            let path = '/directory?query={"type":"users","workspace":"local", "limit": "100"}&offset=' + offset;
             let response = await this.apiCaller.sendApiCall(path);
             let data = await response.json();
             names.push(...data.result)
@@ -733,18 +733,17 @@ class RocketTagsConfigurator {
 
 class XMLHelper {
     onStateChange(event) {
-        console.log(event);
         if (event.target.response !== undefined) {
             var response = JSON.parse(event.target.response);
             if (response.message !== undefined) {
+                //add rocketTags to popup
                 var message = JSON.parse(response.message);
-                if (globalSendMessages[message.id] !== undefined) {
-                    var searchQuery = globalSendMessages[message.id];
+                if (globalSpotlightMessages[message.id] !== undefined) {
+                    var searchQuery = globalSpotlightMessages[message.id];
 
                     var tagUsers = rocketTags.searchForTags(searchQuery);
                     var originalResult = message.result.users;
                     if (originalResult !== undefined) {
-                        console.log(tagUsers);
                         message.result.users.push(...tagUsers)
                     } else {
                         message.result = {
@@ -763,20 +762,68 @@ class XMLHelper {
                     });
                     event.target.response = JSON.stringify(response);
                     event.target.responseText = JSON.stringify(response);
-                    globalSendMessages.splice(message.id, 1);
+                    globalSpotlightMessages.splice(message.id, 1);
+                } else if (message.result !== undefined) {
+                    //change usernames to tags in downloaded messages
+                    if (message.result.messages !== undefined) {
+                        var messages = message.result.messages;
+                        for (var key in messages) {
+                            var originalResult = messages[key];
+                            var mentions = [];
+                            mds = originalResult.md;
+                            mentionElem = originalResult.mentions;
+                            msg = originalResult.msg;
+
+                            //foreach paragraph
+                            for (var index in mds) {
+                                //foreach object in paragraph
+                                var mdValue = mds[index].value;
+                                for (var oindex in mdValue) {
+                                    if (mdValue[oindex].type === "MENTION_USER") {
+                                        mentions[oindex] = mdValue[oindex].value.value;
+                                    } else if (mdValue[oindex].type !== "PLAIN_TEXT" || mdValue[oindex].value != " ") {
+                                        rocketTags.reverseSearchForTags(mentions, index)
+                                        mentions = [];
+                                    }
+                                }
+                                if (mentions.length != 0) {
+                                    rocketTags.reverseSearchForTags(mentions, index);
+                                    mentions = [];
+                                }
+                            }
+                            originalResult.md = mds;
+                            originalResult.mentions = mentionElem;
+                            originalResult.msg = msg;
+                            message.result.messages[key] = originalResult;
+                        }
+                        message = JSON.stringify(message);
+                        response.message = message;
+
+                        Object.defineProperty(event.target, 'response', {
+                            writable: true
+                        });
+                        Object.defineProperty(event.target, 'responseText', {
+                            writable: true
+                        });
+                        event.target.response = JSON.stringify(response);
+                        event.target.responseText = JSON.stringify(response);
+                    }
                 }
             }
         }
     }
 }
 
+var mds = '';
+var mentionElem = '';
+var msg = '';
+var globalSpotlightMessages = [];
 const ApiCaller = new ApiHelper(CookieManager.getCookie('rc_token'), CookieManager.getCookie('rc_uid'));
 const rocketTagsConfigurator = new RocketTagsConfigurator(rocketTagsConfiguratorCommand, ApiCaller, configurationChannelName);
 const rocketTags = new RocketTags(ApiCaller, rocketTagsConfigurator, configurationEditors, configurationSyncIntervalInSec);
 const xmlHelper = new XMLHelper();
 var oldOpen = XMLHttpRequest.prototype.open;
 var oldSend = XMLHttpRequest.prototype.send;
-var globalSendMessages = [];
 
 // XHR open and send methods are overwritten so we can "inject" our "users"
 XMLHttpRequest.prototype.open = function () {
@@ -787,15 +834,29 @@ XMLHttpRequest.prototype.open = function () {
 }
 
 XMLHttpRequest.prototype.send = function () {
-    parsedArguments = JSON.parse(arguments[0])
-    message = JSON.parse(parsedArguments.message);
-    messageMethod = message.method;
+    try {
+        var parsedArguments = JSON.parse(arguments[0])
+      } catch (error) {
+        var parsedArguments = false;
+      }
+    if (parsedArguments) {
+      var message = JSON.parse(parsedArguments.message);
+    var messageMethod = message.method;
     if (messageMethod === 'spotlight') {
-        messageId = message.id;
-        queryString = message.params[0];
-        globalSendMessages[messageId] = queryString;
+        var messageId = message.id;
+        var queryString = message.params[0];
+        globalSpotlightMessages[messageId] = queryString;
+    } else if (messageMethod === 'sendMessage') {
+        console.log(message);
+        var queryString = message.params[0];
+        queryString.msg = rocketTags.replaceTags(queryString.msg)
+        message.params[0] = queryString;
+        message = JSON.stringify(message);
+        parsedArguments.message = message;
+        arguments[0] = JSON.stringify(parsedArguments);
     }
-
+    }
+    
     oldSend.apply(this, arguments);
 }
 
