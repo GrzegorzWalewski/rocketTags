@@ -28,8 +28,8 @@ class RocketTags {
     roomMembers;
     inRoomTags;
     myUsername;
-    userNotInGroupMention = '<a class="mention-link mention-link--user" data-username="groupName" data-title="groupName" data-tooltip="groupName">groupName</a>';
-    userInGroupMention = '<a class="mention-link mention-link--all mention-link--group" data-group="groupName">groupName</a>';
+    userNotInGroupMention = '<a class="mention-link mention-link--user" data-username="groupName" data-title="groupName" data-tooltip="userList">groupName</a>';
+    userInGroupMention = '<a class="mention-link mention-link--all mention-link--group" data-group="groupName" data-tooltip="userList">groupName</a>';
 
     constructor(apiCaller, rocketTagsConfigurator, configurationEditors, configurationSyncIntervalInSec) {
         this.rocketTagsConfigurator = rocketTagsConfigurator;
@@ -40,71 +40,20 @@ class RocketTags {
 
     async run() {
         console.log('Grzojda RocketTags: Start');
-        await this.waitForMainNode();
         this.getDOMVariables();
         await this.loadTags();
         await this.loadRoomMembers();
-        this.generateInRoomTags();
-        this.updateLoadedMessages();
         this.addEventListeners();
         if (this.admins.includes(this.myUsername)) {
             this.rocketTagsConfigurator.waitForCommand(this.messageInputNodes, this.tags);
         }
     }
 
-    async waitForMainNode() {
-        return await new Promise(resolve => {
-            const waitForMainNode = setInterval(() => {
-                console.log('Grzojda RocketTags: waiting...');
-                if ($('.message-popup-results').length > 0) {
-                    console.log('Grzojda RocketTags: rendered; running script');
-                    resolve(true);
-                    clearInterval(waitForMainNode);
-                }
-            }, 1000);
-        });
-    }
-
     addEventListeners() {
         let that = this;
 
-        $('aside').click(function () {
-            that.run();
-        });
-
-        $(this.messageInputNodes).each((key, element) => {
-            $(element).keydown(function (e) {
-                if (!e.shiftKey && e.keyCode === 13 && $('.message-popup-items').get(0) === undefined) {
-                    this.value = that.replaceTags(this.value);
-                }
-            });
-        });
-
-        MutationObserver = window.MutationObserver || window.WebKitMutationObserver;
-
-        var observer = new MutationObserver((mutations, observer) => {
-            for (var mutation of mutations) {
-                for (var addedNode of mutation.addedNodes) {
-                    var messageNode = $(addedNode).find('[data-qa-type="message-body"]').get(0);
-                    var rawMessage = $(messageNode).html();
-                    $(messageNode).find('.mention-link').each(function () {
-                        if (that.inRoomTags[$(this).text()] === undefined) {
-                            rawMessage = rawMessage.replace(this.outerHTML, '@' + $(this).prop('title'));
-                        }
-                    })
-                    var originalRaw = rawMessage;
-                    rawMessage = this.reverseReplaceTags(rawMessage);
-
-                    if (originalRaw !== rawMessage) {
-                        $(messageNode).html(rawMessage);
-                    }
-                }
-            }
-        });
-
-        observer.observe($('ul').get(0), {
-            childList: true,
-            childTree: true
+        window.addEventListener('new-message', function(e) {
+            document.getElementById(e.detail._id).innerHTML = that.reverseReplaceTags(document.getElementById(e.detail._id).innerHTML);
         });
     }
 
@@ -136,26 +85,50 @@ class RocketTags {
 
     getDOMVariables() {
         this.messageInputNodes = $('.js-input-message');
-        this.activeRoom = $('main').attr('data-qa-rc-room');
         this.myUsername = $($('figure[data-username]')[0]).data('username');
-        this.roomType = 'channels';
-        if (window.location.pathname.includes('group')) {
-            this.roomType = 'groups';
-        } else if (window.location.pathname.includes('direct')) {
-            this.roomType = 'direct';
-        }
     }
 
     async loadRoomMembers() {
         this.roomMembers = [];
         let names = [];
+
+        this.roomType = 'channels';
+        if (window.location.pathname.includes('group')) {
+            this.roomType = 'groups';
+            var path = window.location.pathname;
+            if (path.indexOf('group/') + 5 != path.lastIndexOf('/'))
+            {
+                var activeRoom = path.substring(
+                    path.indexOf("group/") + 6, 
+                    path.lastIndexOf("/")
+                );
+            } else {
+                var activeRoom = path.substring(path.indexOf("group/") + 6);
+            }
+        } else if (window.location.pathname.includes('direct')) {
+            this.roomType = 'direct';
+        } else {
+            var path = window.location.pathname;
+            if (path.indexOf('channels/') + 8 != path.lastIndexOf('/'))
+            {
+                var activeRoom = path.substring(
+                    path.indexOf("group/") + 9, 
+                    path.lastIndexOf("/")
+                );
+            } else {
+                var activeRoom = path.substring(path.indexOf("group/") + 9);
+            }
+        }
+
+        this.activeRoom = activeRoom;
+
         while (true) {
             if (this.roomType === 'direct') {
                 return;
             }
 
             let offset = this.roomMembers.length;
-            let path = "/" + this.roomType + ".members?roomId=" + this.activeRoom + "&offset=" + offset + "&count=100";
+            let path = "/" + this.roomType + ".members?roomName=" + this.activeRoom + "&offset=" + offset + "&count=100";
             let response = await this.apiCaller.sendApiCall(path);
             let data = await response.json();
             names.push(...data.members);
@@ -194,7 +167,7 @@ class RocketTags {
             var lowerCaseInRoomTag = inRoomTag.toLowerCase();
             console.log(lowerCaseInRoomTag);
             if (inRoomTags[inRoomTag].length !== 0 && (lowerCaseInRoomTag.includes(searchQuery) || searchQuery.length === 0)) {
-                result.push(this.getTagUserObject(inRoomTag));
+                result.push(this.getTagUserObject(inRoomTag, inRoomTags[inRoomTag]));
             }
         }
         return result;
@@ -234,10 +207,10 @@ class RocketTags {
                     _id: index,
                     name: index,
                     type: 'user',
-                    username: index
+                    username: inRoomTags[index].join("_-_")
                 }
                 var mentionString = "@" + mentions.filter(Boolean).join(' @');
-                msg = msg.replaceAll(mentionString, "@" + index);
+                msg = msg.replaceAll(mentionString, "@" + inRoomTags[index].join("_-_"));
             }
         }
 
@@ -254,9 +227,6 @@ class RocketTags {
         }
     }
 
-    /**
-     * @deprecated
-     */
     reverseReplaceTags(text) {
         if (text === undefined) {
             return text;
@@ -269,18 +239,19 @@ class RocketTags {
                 } else {
                     text = text.replaceAll(tagUsersString, this.userInGroupMention.replaceAll('groupName', inRoomTag));
                 }
+                text = text.replaceAll('userList', text);
             }
         }
 
         return text;
     }
 
-    getTagUserObject(tag) {
+    getTagUserObject(tag, users) {
         return {
             _id: tag,
             avatarTag: tag,
-            name: tag,
-            nickname: tag,
+            name: users.toString(),
+            nickname: "GrzojdaRocketTags",
             status: "online",
             statusText: "Doing the hard work",
             username: tag
@@ -294,24 +265,6 @@ class RocketTags {
                 let inputVal = $(this).val();
                 $(this).val(inputVal.slice(0, curPos) + tagname + inputVal.slice(curPos));
             });
-        });
-    }
-
-    updateLoadedMessages() {
-        let that = this;
-        $('[data-qa-type="message-body"]').each(function () {
-            var rawMessage = $(this).html();
-            $(this).find('.mention-link').each(function (index) {
-                if (that.inRoomTags[$(this).text()] === undefined) {
-                    rawMessage = rawMessage.replace(this.outerHTML, '@' + $(this).prop('title'));
-                }
-            });
-            var originalRaw = rawMessage;
-            rawMessage = that.reverseReplaceTags(rawMessage);
-
-            if (originalRaw !== rawMessage) {
-                $(this).html(rawMessage);
-            }
         });
     }
 }
@@ -785,8 +738,8 @@ class XMLHelper {
             if (response.message !== undefined) {
                 //add rocketTags to popup
                 var message = JSON.parse(response.message);
-                if (globalSendMessages[message.id] !== undefined) {
-                    var searchQuery = globalSendMessages[message.id];
+                if (globalSpotlightMessages[message.id] !== undefined) {
+                    var searchQuery = globalSpotlightMessages[message.id];
 
                     var tagUsers = rocketTags.searchForTags(searchQuery);
                     var originalResult = message.result.users;
@@ -809,7 +762,7 @@ class XMLHelper {
                     });
                     event.target.response = JSON.stringify(response);
                     event.target.responseText = JSON.stringify(response);
-                    globalSendMessages.splice(message.id, 1);
+                    globalSpotlightMessages.splice(message.id, 1);
                 } else if (message.result !== undefined) {
                     //change usernames to tags in downloaded messages
                     if (message.result.messages !== undefined) {
@@ -864,7 +817,7 @@ class XMLHelper {
 var mds = '';
 var mentionElem = '';
 var msg = '';
-var globalSendMessages = [];
+var globalSpotlightMessages = [];
 const ApiCaller = new ApiHelper(CookieManager.getCookie('rc_token'), CookieManager.getCookie('rc_uid'));
 const rocketTagsConfigurator = new RocketTagsConfigurator(rocketTagsConfiguratorCommand, ApiCaller, configurationChannelName);
 const rocketTags = new RocketTags(ApiCaller, rocketTagsConfigurator, configurationEditors, configurationSyncIntervalInSec);
@@ -881,14 +834,26 @@ XMLHttpRequest.prototype.open = function () {
 }
 
 XMLHttpRequest.prototype.send = function () {
-    var parsedArguments = JSON.parse(arguments[0])
+    try {
+        var parsedArguments = JSON.parse(arguments[0])
+      } catch (error) {
+        var parsedArguments = false;
+      }
     if (parsedArguments) {
       var message = JSON.parse(parsedArguments.message);
     var messageMethod = message.method;
     if (messageMethod === 'spotlight') {
         var messageId = message.id;
         var queryString = message.params[0];
-        globalSendMessages[messageId] = queryString;
+        globalSpotlightMessages[messageId] = queryString;
+    } else if (messageMethod === 'sendMessage') {
+        console.log(message);
+        var queryString = message.params[0];
+        queryString.msg = rocketTags.replaceTags(queryString.msg)
+        message.params[0] = queryString;
+        message = JSON.stringify(message);
+        parsedArguments.message = message;
+        arguments[0] = JSON.stringify(parsedArguments);
     }
     }
     
