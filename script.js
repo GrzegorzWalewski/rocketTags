@@ -40,7 +40,7 @@ class RocketTags {
 
     async run() {
         console.log('Grzojda RocketTags: Start');
-        this.getDOMVariables();
+        await this.getDOMVariables();
         await this.loadTags();
         await this.loadRoomMembers();
         this.addEventListeners();
@@ -83,9 +83,22 @@ class RocketTags {
 
     }
 
-    getDOMVariables() {
-        this.messageInputNodes = $('.js-input-message');
+    delay(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms))
+    }
+
+    async getDOMVariables() {
+        while ($($('figure[data-username]')[0]).length !== 1) {
+            console.log('waiting for username');
+            await this.delay(100);
+        }
         this.myUsername = $($('figure[data-username]')[0]).data('username');
+
+        while ($('.js-input-message').length !== 1) {
+            console.log('waiting for input nodes');
+            await this.delay(100);
+        }
+        this.messageInputNodes = $('.js-input-message');
     }
 
     async loadRoomMembers() {
@@ -99,7 +112,7 @@ class RocketTags {
             if (path.indexOf('group/') + 5 != path.lastIndexOf('/'))
             {
                 var activeRoom = path.substring(
-                    path.indexOf("group/") + 6, 
+                    path.indexOf("group/") + 6,
                     path.lastIndexOf("/")
                 );
             } else {
@@ -109,14 +122,14 @@ class RocketTags {
             this.roomType = 'direct';
         } else {
             var path = window.location.pathname;
-            if (path.indexOf('channels/') + 8 != path.lastIndexOf('/'))
+            if (path.indexOf('channel/') + 7 != path.lastIndexOf('/'))
             {
                 var activeRoom = path.substring(
-                    path.indexOf("group/") + 9, 
+                    path.indexOf("channel/") + 8,
                     path.lastIndexOf("/")
                 );
             } else {
-                var activeRoom = path.substring(path.indexOf("group/") + 9);
+                var activeRoom = path.substring(path.indexOf("channel/") + 8);
             }
         }
 
@@ -165,7 +178,6 @@ class RocketTags {
         var inRoomTags = this.generateInRoomTags();
         for (var inRoomTag in inRoomTags) {
             var lowerCaseInRoomTag = inRoomTag.toLowerCase();
-            console.log(lowerCaseInRoomTag);
             if (inRoomTags[inRoomTag].length !== 0 && (lowerCaseInRoomTag.includes(searchQuery) || searchQuery.length === 0)) {
                 result.push(this.getTagUserObject(inRoomTag, inRoomTags[inRoomTag]));
             }
@@ -847,7 +859,6 @@ XMLHttpRequest.prototype.send = function () {
         var queryString = message.params[0];
         globalSpotlightMessages[messageId] = queryString;
     } else if (messageMethod === 'sendMessage') {
-        console.log(message);
         var queryString = message.params[0];
         queryString.msg = rocketTags.replaceTags(queryString.msg)
         message.params[0] = queryString;
@@ -856,7 +867,7 @@ XMLHttpRequest.prototype.send = function () {
         arguments[0] = JSON.stringify(parsedArguments);
     }
     }
-    
+
     oldSend.apply(this, arguments);
 }
 
