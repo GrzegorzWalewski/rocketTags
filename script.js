@@ -41,7 +41,7 @@ class RocketTags {
         await this.loadTags();
         await this.loadRoomMembers();
         this.addEventListeners();
-        if (!this.isAdmin) {
+        if (this.isAdmin) {
             this.rocketTagsConfigurator.createButton(this.tags);
         }
     }
