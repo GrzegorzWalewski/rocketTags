@@ -13,3 +13,10 @@
 
  ## 0.0.4
  - Change replace method. Right now tags are replaced directly in request, without need of any event listeners
+
+ ## 0.0.5
+ - change from configuration command, to button
+ - remove eventListeners that waited for DOM elemnent to load which led to performace issues
+ - re-style configurator
+ - username search at configurator
+ - few fixes
