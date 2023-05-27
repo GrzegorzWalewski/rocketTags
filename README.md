@@ -13,7 +13,7 @@ Main goal of this project is to add tag mention to RocketChat. I'm advanced Disc
 ## "Installation"
 1. Copy whole script.js content
 2. You can change 4 thing - admin role - only people with this role may change configuration; configuration channel, and configuration sync interval
-3. Paste it in *Custom Script for Logged In Users* in Layout settings ![img_1.png](img_1.png)
+3. Paste it in *Custom Script for Logged In Users* in Layout settings ![obraz](https://github.com/GrzegorzWalewski/rocketTags/assets/25950627/f815b4a9-5870-4206-848a-30cd9a97cded)
 4. Voi la!
 
 ## Configuration
