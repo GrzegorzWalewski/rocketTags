@@ -20,3 +20,8 @@
  - re-style configurator
  - username search at configurator
  - few fixes
+
+ ## 0.0.6
+ - fixed emoji reaction removal issue (user didn't see any changes)
+ - fixed channel creation/removal issue
+ - fixed channel member adding/removal
