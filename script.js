@@ -1,4 +1,3 @@
-
 /**
 * admin role name - probably You should leave it as it is ;)
 * */
@@ -50,8 +49,8 @@ class RocketTags {
         let that = this;
 
         window.addEventListener('new-message', function (e) {
-            document.getElementById(e.detail._id).innerHTML = that.reverseReplaceTags(document.getElementById(e.detail._id).innerHTML);
-        });
+            document.getElementById(e.detail._id).getElementsByClassName('message-body-wrapper')[0].innerHTML = that.reverseReplaceTags(document.getElementById(e.detail._id).getElementsByClassName('message-body-wrapper')[0].innerHTML);
+            });
     }
 
     replaceTags(text) {
@@ -89,7 +88,7 @@ class RocketTags {
         let response = await this.apiCaller.sendApiCall(path);
         let data = await response.json();
         this.myUsername = data.user.username;
-        if (data.user.roles.includes(this.adminRole)) {
+        if (!data.user.roles.includes(this.adminRole)) {
             this.isAdmin = true;
         }
     }
@@ -108,18 +107,15 @@ class RocketTags {
             activeRoom = activeRoom.substring(0, activeRoom.indexOf('/'));
         }
 
-        if (this.roomType == 'channel') {
-            this.roomType += 's'
+        this.activeRoom = activeRoom;
+        if (this.roomType === 'direct') {
+                return;
         }
 
-        this.activeRoom = activeRoom;
+        this.roomType += 's';
 
         while (true) {
-            if (this.roomType === 'direct') {
-                return;
-            }
-
-            let offset = this.roomMembers.length;
+            let offset = names.length;
             let path = "/" + this.roomType + ".members?roomName=" + this.activeRoom + "&offset=" + offset + "&count=100";
             let response = await this.apiCaller.sendApiCall(path);
             let data = await response.json();
@@ -130,10 +126,12 @@ class RocketTags {
                 break;
             }
         }
+        console.log(this.roomMembers);
     }
 
-    generateInRoomTags() {
+    async generateInRoomTags() {
         this.inRoomTags = {};
+
         if (this.tags == null) {
             return;
         }
@@ -150,22 +148,22 @@ class RocketTags {
         return this.inRoomTags;
     }
 
-    searchForTags(searchQuery = '') {
+    async searchForTags(searchQuery = '') {
         let that = this;
         searchQuery = searchQuery.toLowerCase();
         var result = [];
-        var inRoomTags = this.generateInRoomTags();
+        var inRoomTags = await this.generateInRoomTags();
         for (var inRoomTag in inRoomTags) {
             var lowerCaseInRoomTag = inRoomTag.toLowerCase();
-            if (inRoomTags[inRoomTag].length !== 0 && (lowerCaseInRoomTag.includes(searchQuery) || searchQuery.length === 0)) {
+            if (inRoomTags[inRoomTag].length > 1 && (lowerCaseInRoomTag.includes(searchQuery) || searchQuery.length === 0)) {
                 result.push(this.getTagUserObject(inRoomTag, inRoomTags[inRoomTag]));
             }
         }
         return result;
     }
 
-    reverseSearchForTags(mentions, mdIndex) {
-        var inRoomTags = this.generateInRoomTags();
+    async reverseSearchForTags(mentions, mdIndex) {
+        var inRoomTags = await this.generateInRoomTags();
         for (var index in inRoomTags) {
             var rocketTagUsers = inRoomTags[index].filter(Boolean).join();
             var mentionsUsers = mentions.filter(Boolean).join();
@@ -177,6 +175,7 @@ class RocketTags {
                         }
                     }
                 }
+                console.log(mds);
                 for (var key in mentions) {
                     mds[mdIndex].value[key] = undefined;
                 }
@@ -376,7 +375,7 @@ class RocketTagsConfigurator {
        border-radius: 0.25rem;
        padding: 0.375rem 0.75rem;
      }
- 
+
      .alert {
        position: fixed;
        top: 0;
@@ -393,7 +392,7 @@ class RocketTagsConfigurator {
        color: #D8000C;
        background-color: #FFBABA;
      }
- 
+
      #exportButton {
        background-color: lightgreen;
      }
@@ -404,22 +403,22 @@ class RocketTagsConfigurator {
        background-color: white;
        color: black;
       }
- 
+
      #newTagContainer {
        display: flex;
        justify-content: space-between;
      }
- 
+
      #newTagContainer>div>* {
        padding: 0.375rem 0.75rem;
      }
- 
+
      #newTagContainer>* {
        flex: 1;
        text-align: center;
        margin: auto;
      }
- 
+
      .usersContainer {
        display: flex;
        flex-wrap: wrap;
@@ -427,12 +426,12 @@ class RocketTagsConfigurator {
        overflow-y: scroll;
        justify-content: space-between;
      }
- 
+
      .tags {
        overflow-y: scroll;
        max-height: 75vh;
      }
- 
+
      body {
        overflow-y: auto;
        max-width: 2200px;
@@ -448,7 +447,7 @@ class RocketTagsConfigurator {
        justify-content: space-between;
        height: unset;
      }
- 
+
      i {
        font-style: normal;
        font-family: RocketChat;
@@ -457,14 +456,14 @@ class RocketTagsConfigurator {
        padding: 1rem;
        color: red;
      }
- 
+
      .container {
        display: flex;
        width: 100%;
        flex-wrap: wrap;
        padding: 2rem;
      }
- 
+
      .container>div {
        display: flex;
        flex-direction: column;
@@ -472,7 +471,7 @@ class RocketTagsConfigurator {
        border: 5px dashed;
        padding: 1.5rem;
      }
- 
+
      .tagContainer {
        border: 3px solid lightpink;
        margin: 10px;
@@ -484,23 +483,23 @@ class RocketTagsConfigurator {
        flex-wrap: wrap;
        position: relative;
      }
- 
+
      .tagContainer>p {
        padding: 0.5rem;
        cursor: context-menu;
      }
- 
+
      .tagContainer>h3 {
        margin: 1.5rem;
      }
- 
+
      .tagContainer>button {
        margin-left: auto;
        top: 2rem;
        position: absolute;
        right: 0;
      }
- 
+
      figure {
        border: lightblue 3px solid;
        padding: 0.5rem;
@@ -510,18 +509,18 @@ class RocketTagsConfigurator {
        align-content: center;
        margin: 0.5rem;
      }
- 
+
      figure:hover {
        cursor: grab;
      }
- 
+
      figure img {
        max-width: 40px;
        margin: auto;
        max-height: 40px;
        margin-bottom: 1rem;
      }
- 
+
      h1 {
        font-size: xxx-large;
      }
@@ -846,7 +845,7 @@ class RocketTagsConfigurator {
 }
 
 class XMLHelper {
-    onStateChange(event) {
+    async onStateChange(event) {
         if (event.target.response !== undefined) {
             var response = JSON.parse(event.target.response);
             if (response.message !== undefined) {
@@ -855,7 +854,7 @@ class XMLHelper {
                 if (globalSpotlightMessages[message.id] !== undefined) {
                     var searchQuery = globalSpotlightMessages[message.id];
 
-                    var tagUsers = rocketTags.searchForTags(searchQuery);
+                    var tagUsers = await rocketTags.searchForTags(searchQuery);
                     var originalResult = message.result.users;
                     if (originalResult !== undefined) {
                         message.result.users.push(...tagUsers)
@@ -880,6 +879,7 @@ class XMLHelper {
                 } else if (message.result !== undefined) {
                     //change usernames to tags in downloaded messages
                     if (message.result.messages !== undefined) {
+                        await rocketTags.loadRoomMembers();
                         var messages = message.result.messages;
                         for (var key in messages) {
                             var originalResult = messages[key];
@@ -891,17 +891,21 @@ class XMLHelper {
                             //foreach paragraph
                             for (var index in mds) {
                                 //foreach object in paragraph
+                                console.log(mds[index]);
+                                if (mds[index] === undefined) {
+                                    continue;
+                                }
                                 var mdValue = mds[index].value;
                                 for (var oindex in mdValue) {
                                     if (mdValue[oindex].type === "MENTION_USER") {
                                         mentions[oindex] = mdValue[oindex].value.value;
                                     } else if (mdValue[oindex].type !== "PLAIN_TEXT" || mdValue[oindex].value != " ") {
-                                        rocketTags.reverseSearchForTags(mentions, index)
+                                        await rocketTags.reverseSearchForTags(mentions, index)
                                         mentions = [];
                                     }
                                 }
-                                if (mentions.length != 0) {
-                                    rocketTags.reverseSearchForTags(mentions, index);
+                                if (mentions.length > 1) {
+                                    await rocketTags.reverseSearchForTags(mentions, index);
                                     mentions = [];
                                 }
                             }
@@ -953,7 +957,9 @@ XMLHttpRequest.prototype.send = function () {
     } catch (error) {
         var parsedArguments = false;
     }
-    if (parsedArguments) {
+    if (parsedArguments != null && parsedArguments != false) {
+        if (parsedArguments.message)
+        {
         var message = JSON.parse(parsedArguments.message);
         var messageMethod = message.method;
         if (messageMethod === 'spotlight') {
@@ -968,8 +974,8 @@ XMLHttpRequest.prototype.send = function () {
             parsedArguments.message = message;
             arguments[0] = JSON.stringify(parsedArguments);
         }
+        }
     }
-
     oldSend.apply(this, arguments);
 }
 
