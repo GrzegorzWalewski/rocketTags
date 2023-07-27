@@ -49,13 +49,15 @@ class RocketTags {
         let that = this;
 
         window.addEventListener('new-message', function (e) {
-            document.getElementById(e.detail._id).getElementsByClassName('message-body-wrapper')[0].innerHTML = that.reverseReplaceTags(document.getElementById(e.detail._id).getElementsByClassName('message-body-wrapper')[0].innerHTML);
+            if (document.getElementById(e.detail._id) {
+                document.getElementById(e.detail._id).getElementsByClassName('message-body-wrapper')[0].innerHTML = that.reverseReplaceTags(document.getElementById(e.detail._id).getElementsByClassName('message-body-wrapper')[0].innerHTML);
+        }
             });
     }
 
     replaceTags(text) {
         for (var inRoomTag in this.inRoomTags) {
-            if (this.inRoomTags[inRoomTag].length !== 0) {
+            if (this.inRoomTags[inRoomTag].length > 1) {
                 text = text.replaceAll('@' + inRoomTag, '@' + this.inRoomTags[inRoomTag].join(' @') + ' ');
             }
         }
@@ -223,7 +225,7 @@ class RocketTags {
         }
         for (var inRoomTag in this.inRoomTags) {
             var tagUsersString = '@' + this.inRoomTags[inRoomTag].join(' @');
-            if (text.includes(tagUsersString) && this.inRoomTags[inRoomTag].length !== 0) {
+            if (text.includes(tagUsersString) && this.inRoomTags[inRoomTag].length > 1) {
                 if (!this.inRoomTags[inRoomTag].includes(this.myUsername)) {
                     text = text.replaceAll(tagUsersString, this.userNotInGroupMention.replaceAll('groupName', inRoomTag));
                 } else {
