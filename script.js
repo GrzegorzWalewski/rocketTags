@@ -90,7 +90,7 @@ class RocketTags {
         let response = await this.apiCaller.sendApiCall(path);
         let data = await response.json();
         this.myUsername = data.user.username;
-        if (!data.user.roles.includes(this.adminRole)) {
+        if (data.user.roles.includes(this.adminRole)) {
             this.isAdmin = true;
         }
     }
