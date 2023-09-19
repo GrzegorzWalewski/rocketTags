@@ -49,7 +49,7 @@ class RocketTags {
         let that = this;
 
         window.addEventListener('new-message', function (e) {
-            if (document.getElementById(e.detail._id) {
+            if (document.getElementById(e.detail._id)) {
                 document.getElementById(e.detail._id).getElementsByClassName('message-body-wrapper')[0].innerHTML = that.reverseReplaceTags(document.getElementById(e.detail._id).getElementsByClassName('message-body-wrapper')[0].innerHTML);
         }
             });
